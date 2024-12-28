@@ -7,7 +7,7 @@ import yfinance as yf
 import investpy
 import requests
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import time
 import MetaTrader5 as mt5
 
@@ -32,33 +32,18 @@ class MT5_funcs:
     def disconnect_from_mt5(self):
         mt5.shutdown()
     
-    # Insert data into MT5
-    def import_data_to_mt5(symbol, data):
-        for _, row in data.iterrows():
-            rates = mt5.CopyRatesFromPos(symbol, mt5.TIMEFRAME_M1, 0, len(data))
-            new_rate = {
-                "time": int(row["time"].timestamp()),
-                "open": row["open"],
-                "high": row["high"],
-                "low": row["low"],
-                "close": row["close"],
-                "tick_volume": row["volume"],
-                "spread": 0,
-                "real_volume": 0
-            }
-            rates.append(new_rate)
-
-            if not mt5.symbol_set(symbol, rates):
-                print(f"Failed to import data for {symbol}")
-                break
 
 class DataProvider(MT5_funcs):
     def __init__(self):
         super().__init__()
+        
+        self.directory = "../../Files/CSV_data/"
         # Bybit API Endpoint for K-line data
         self.bybit_url = "https://api.bybit.com/v2/public/kline/list"
         # Bitstamp API URL for BTC/USD ticker
         self.bitstamp_url = "https://www.bitstamp.net/api/v2/ticker/btcusd/"
+
+        self.last_date = "2024-12-28"
 
     def prepare_mt5_format(self, data):
         """
@@ -79,7 +64,7 @@ class DataProvider(MT5_funcs):
         
         
 
-        # Format data for MT5 (Time, Open, High, Low, Close, Volume)
+        # print(data.head())
         data.reset_index(inplace=True)
         data = data.rename(columns={
             "Datetime": "Time", 
@@ -89,17 +74,29 @@ class DataProvider(MT5_funcs):
             "Close": "Close", 
             "Volume": "Volume"
         })
+        
+        # Format data for MT5 (Time, Open, High, Low, Close, Volume)
+        data = data[["Time", "Open", "High", "Low", "Close", "Volume"]]
+        # Convert the 'Datetime' column to the required format
+        data['Time'] = pd.to_datetime(data['Time']).dt.strftime('%Y.%m.%d %H:%M')
+        # print(data.head())
+        # Flatten multi-index columns
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = [f"{col[0]}" for col in data.columns]
+        # print(data.head())
         return data
 
-    def save_to_csv(self, data, filename="BTCUSD_m1_mt5.csv"):
+    def save_to_existing_csv(self, data, filename="BTCUSD_m1.csv"):
         """
-        Save the MT5-compatible data to a CSV file.
+        Save the MT5-compatible data to an existing CSV file.
         """
-        # df = pd.DataFrame(data, columns=["Date", "Time", "Open", "High", "Low", "Close", "Volume"])
-        # print(df.tail())
-        # df.to_csv(f"../data/{filename}", index=False, header=False)
-        data.to_csv(f"C:/Users/mzarei/AppData/Roaming/MetaQuotes/Terminal/D0E8209F77C8CF37AD8BF550E51FF075/MQL5/Files/data/{filename}", index=False)
-        print(f"Data saved to {filename}")
+        # open the existing file and append the new data
+        existing_data = pd.read_csv(f"{self.directory}{filename}")
+        existing_data = pd.concat([existing_data, data], ignore_index=True)
+        # remove duplicates
+        existing_data.drop_duplicates(subset=["Time"], keep="last", inplace=True)
+        existing_data.to_csv(f"{self.directory}{filename}", index=False, sep=',')
+        # print(f"Data saved to {filename}")
 
     def get_symbol_info(self, symbol):
         ticker = yf.Ticker(symbol)
@@ -122,8 +119,14 @@ class DataProvider(MT5_funcs):
         """
         Fetch historical data from Yahoo Finance using yfinance.
         """
-        data = yf.download(tickers=symbol, start=start, end=end, period=period, interval=interval)
-        print(data.head())
+        # Important: Use either start/end or period, not both.
+        if start is None:
+            data = yf.download(tickers=symbol, period=period, interval=interval, progress=False)
+        else:
+            data = yf.download(tickers=symbol, start=start, end=end, interval=interval, progress=False)
+
+        if not data.empty:
+            self.last_date = data.index[-1].to_pydatetime() + timedelta(days=1)
         return data
 
     def fetch_bybit_kline(self, symbol="BTCUSD", interval="1", limit=200):
@@ -162,14 +165,14 @@ class DataProvider(MT5_funcs):
         Fetch historical data from Investing.com using investpy
         """
 
-    def fetch_data(self, source = "yfinance", symbol="NVDA", start=None, end=None, period="max", interval="1m", limit=200):
+    def fetch_data(self, source = "yfinance", symbol="NVDA", start=None, end=None, period="1d", interval="1m", limit=200):
         """
         Fetch data from different providers and prepare for MT5.
         """
         if source == "yfinance":
             data = self.fetch_yfinance_data(symbol, start, end, period, interval)
             mt5_data = self.prepare_mt5_format(data)
-            self.save_to_csv(mt5_data, f"{symbol}_{interval}_mt5.csv")
+            self.save_to_existing_csv(mt5_data, f"{symbol}_{interval}.csv")
         elif source == "bybit":
             kline_data = self.fetch_bybit_kline(symbol, interval, limit)
             mt5_data = self.prepare_mt5_format(kline_data)
@@ -184,5 +187,63 @@ class DataProvider(MT5_funcs):
         # print(f"Collected: {data}")
         # self.save_to_mt5_format(data)
 
-        return mt5_data
+        return self.last_date.strftime('%Y-%m-%d'), True
 
+    def fetch_data_in_chunks(self, source = "yfinance", symbol="NVDA", start="New", interval="1m", chunk_days=7):
+        all_data = []
+        finish = False
+
+        # data = yf.download(tickers=symbol, period="1d", interval=interval, progress=False)
+        data = self.fetch_yfinance_data(symbol, period="1d", interval=interval)
+        # Check if data is available
+        if data.empty:
+            print(f"No data available for symbol: {symbol}")
+            return None
+        # Get the last available date
+        current_end = self.last_date
+        # print(f"Last available date for {symbol}: {current_end.strftime('%Y-%m-%d')}")
+        if start != "New":
+            start_date = datetime.strptime(start, '%Y-%m-%d').replace(tzinfo=timezone.utc) + timedelta(hours=23, minutes=59)
+            # if the start date is greater than the last available date, return
+            if start_date >= current_end:
+                return self.last_date.strftime('%Y-%m-%d'), False
+
+        while True:
+            chunk_start = current_end - timedelta(days=chunk_days)
+            if start != "New" and chunk_start < start_date:
+                chunk_start = start_date
+                finish = True
+            # print(f"Fetching data from {chunk_start}")
+
+            # get data for the chunk
+            if source == "yfinance":
+                data = self.fetch_yfinance_data(symbol=symbol, start=chunk_start.strftime('%Y-%m-%d'), end=current_end.strftime('%Y-%m-%d'), interval=interval)
+            
+            if data.empty:
+                while data.empty and chunk_start < current_end:
+                    chunk_start = chunk_start + timedelta(days=1)
+                    data = self.fetch_yfinance_data(symbol=symbol, start=chunk_start.strftime('%Y-%m-%d'), end=current_end.strftime('%Y-%m-%d'), interval=interval)
+                # print("No more data available.")
+                all_data.insert(0, data)
+                break
+            # Append the chunk to the beginning of the list
+            all_data.insert(0, data)
+            # all_data.append(data)
+            if finish:
+                break
+            # Move to the next chunk
+            current_end = chunk_start
+
+        # Concatenate all chunks into a single DataFrame
+        if all_data:
+            all_data = pd.concat(all_data)
+            mt5_data = self.prepare_mt5_format(all_data)
+            # Save the data to a CSV file for first time
+            if start == "New":
+                mt5_data.to_csv(f"{self.directory}{symbol}_{interval}.csv", index=False, sep=',')
+            else:
+                self.save_to_existing_csv(mt5_data, f"{symbol}_{interval}.csv")
+
+        return self.last_date.strftime('%Y-%m-%d'), True
+    
+    
