@@ -33,14 +33,10 @@ if __name__ == "__main__":
     if True:
 
         for symbol in symbols:
-            current_date, exist_data = data.fetch_data_in_chunks(source=symbol["source"], symbol=symbol["symbol"], start=symbol["last_date"], interval="1m", chunk_days=7)
-            if exist_data:
-                symbol["last_date"] = current_date
+            data.fetch_data_in_chunks(source=symbol["source"], symbol=symbol["symbol"], interval="1m", chunk_days=7)
         while True:
             for symbol in symbols:
-                current_date, exist_data = data.fetch_data(source=symbol["source"], symbol=symbol["symbol"], period="1d", interval="1m")
-                if exist_data:
-                    symbol["last_date"] = current_date
+                data.fetch_data(source=symbol["source"], symbol=symbol["symbol"], period="1d", interval="1m")
             try:
                 time_over = inputimeout(prompt='End (y/n): ', timeout=5)
                 if time_over == "y":
@@ -53,9 +49,8 @@ if __name__ == "__main__":
 
     # convert symbols to panda and save it to CSV file
     df_symbols = pd.DataFrame(symbols)
-    df_symbols.to_csv('symbols.csv', index=False, columns=["symbol", "source", "last_date"])
+    df_symbols.to_csv('symbols.csv', index=False, columns=["symbol", "source"])
 
     # data.disconnect_from_mt5()
 
 
-    
