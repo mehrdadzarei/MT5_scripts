@@ -1,6 +1,7 @@
-symbol,source
-NVDA,yfinance
-ASML.AS,yfinance
-TSLA,yfinance
-MSFT,yfinance
-BTC-USD,yfinance
+mt5_symbol,sr_symbol,source
+NVDA,NVDA,yfinance
+ASML,ASML.AS,yfinance
+TSLA,TSLA,yfinance
+MSFT,MSFT,yfinance
+AMZN,AMZN,yfinance
+BTCUSD,BTC-USD,yfinance
