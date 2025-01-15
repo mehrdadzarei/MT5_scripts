@@ -41,7 +41,10 @@ class DataProvider(MT5_funcs):
         # Bybit API Endpoint for K-line data
         self.bybit_url = "https://api.bybit.com/v2/public/kline/list"
         # Bitstamp API URL for BTC/USD ticker
-        self.bitstamp_url = "https://www.bitstamp.net/api/v2/ticker/btcusd/"
+        self.bitstamp_url = f"https://www.bitstamp.net/api/v2/ohlc/" # {pair}/"
+        # Fetch OHLC data from CoinGecko API.
+        self.coinGecko_url = f"https://api.coingecko.com/api/v3/coins/" #{coin_id}/ohlc"
+        self.binance_url = "https://api.binance.com/api/v3/klines"
 
         self.last_date = "2024-12-28"
         # Define max chunk_days for each interval
@@ -61,36 +64,29 @@ class DataProvider(MT5_funcs):
         """
         Prepare the data in MT5-compatible format.
         """
-        # mt5_data = []
-        # for candle in data:
-            # timestamp = candle["open_time"]
-            # dt = datetime.utcfromtimestamp(timestamp)
-            # date = dt.strftime('%Y.%m.%d')
-            # time = dt.strftime('%H:%M')
-            # open_price = float(candle["open"])
-            # high_price = float(candle["high"])
-            # low_price = float(candle["low"])
-            # close_price = float(candle["close"])
-            # volume = float(candle["volume"])
-            # mt5_data.append([date, time, open_price, high_price, low_price, close_price, volume])
-        
-        
-
         # print(data.head())
+        # Flatten multi-index columns
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = [f"{col[0]}" for col in data.columns]
+        # print(data.head())
+        data.reset_index(inplace=True)
+        data = data.rename(columns={
+            "timestamp": "Time", 
+            "Datetime": "Time", 
+            "Date": "Time", 
+            "open": "Open", 
+            "high": "High", 
+            "low": "Low", 
+            "close": "Close", 
+            "volume": "Volume"
+        })
+        # print(data.head())
+        
         # Check if the first column contains datetime values
-        if pd.to_datetime(data.index, errors='coerce').notna().all():
-            data.index.name = 'Time'
-            data.reset_index(inplace=True)
+        # if pd.to_datetime(data.index, errors='coerce').notna().all():
+        #     data.index.name = 'Time'
+        #     data.reset_index(inplace=True)
         # print(data.head())
-        # data.reset_index(inplace=True)
-        # data = data.rename(columns={
-        #     "Datetime": "Time", 
-        #     "Open": "Open", 
-        #     "High": "High", 
-        #     "Low": "Low", 
-        #     "Close": "Close", 
-        #     "Volume": "Volume"
-        # })
 
         # Remove any columns that are not in the required format
         required_columns = ["Time", "Open", "High", "Low", "Close", "Volume"]
@@ -99,10 +95,6 @@ class DataProvider(MT5_funcs):
         # print(data.head())
         # Convert the 'Datetime' column to the required format
         data['Time'] = pd.to_datetime(data['Time']).dt.strftime('%Y.%m.%d %H:%M')
-        # print(data.head())
-        # Flatten multi-index columns
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = [f"{col[0]}" for col in data.columns]
         # print(data.head())
         return data
 
@@ -181,25 +173,96 @@ class DataProvider(MT5_funcs):
         else:
             raise ValueError(f"Error fetching data: {data}")
 
-    def fetch_bitstamp_data(self):
-        response = requests.get(self.bitstamp_url)
-        data = response.json()
-        # Use timezone-aware datetime
-        dt = datetime.fromtimestamp(int(data['timestamp']), tz=timezone.utc)
-        return {
-            "date": dt.strftime('%Y.%m.%d'),
-            "time": dt.strftime('%H:%M'),
-            "open": float(data['open']),
-            "high": float(data['high']),
-            "low": float(data['low']),
-            "close": float(data['last']),
-            "volume": float(data['volume'])
+    def fetch_bitstamp_data(self, symbol="btcusd", interval="1m", start=None, end=None, limit=1000):
+        if interval == "1m":
+            step = 60
+        elif interval == "5m":
+            step = 300
+        elif interval == "1h":
+            step = 3600
+        elif interval == "1d":
+            step = 86400
+        
+        params = {
+            "step": step,   # Interval in seconds (60 = 1 minute)
+            "limit": limit  # 1000 Maximum per request
         }
+        if start:
+            params["start"] = start
+        if end:
+            params["end"] = end
+        
+        url = f"{self.bitstamp_url}{symbol}/"
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            ohlc = data["data"]["ohlc"]
+            df = pd.DataFrame(ohlc, index=None)
+            df["timestamp"] = pd.to_datetime(df["timestamp"].astype(int), unit="s")
+            # print(df.head())
+            # print(df.tail())
+            # if there is data, update the last date
+            if not df.empty:
+                self.last_date = df["timestamp"].iloc[-1].to_pydatetime()
+            return df
+        else:
+            print(f"Error {response.status_code}: {response.text}")
+            return None
     
     def fetch_investpy_data(self, symbol="BTC/USD", start="01/01/2021", end="31/01/2021"):
         """
         Fetch historical data from Investing.com using investpy
         """
+
+    def fetch_coingecko_data(self, symbol="bitcoin", days=1):
+        """
+        Fetch historical OHLC data from CoinGecko API.
+        """
+        params = {
+            "vs_currency": "usd",
+            "days": days
+        }
+        
+        url = f"{self.coinGecko_url}{symbol}/ohlc"
+        response = requests.get(url, params=params)
+
+        if response.status_code == 200:
+            data = response.json()
+            # Create DataFrame with appropriate column names
+            df = pd.DataFrame(data, columns=["timestamp", "Open", "High", "Low", "Close"])
+            # Convert timestamp to datetime
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            print(df.head())
+            print(df.tail())
+            return df
+        else:
+            print(f"Error {response.status_code}: {response.text}")
+            return None
+
+    def fetch_binance_data(self, symbol="BTCUSDT", interval="1m", start=None, end=None, limit=1000):
+        """
+        Fetch historical data from Binance API.
+        """
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit
+        }
+        if start:
+            params["startTime"] = start
+        if end:
+            params["endTime"] = end
+        
+        response = requests.get(self.binance_url, params=params)
+        if response.status_code == 200:
+            
+            data = response.json()
+            # Create DataFrame with appropriate column names
+            df = pd.DataFrame(data, columns=["timestamp", "Open", "High", "Low", "Close", "Volume", "CloseTime", "QuoteAssetVolume", "NumberOfTrades", "TakerBuyBaseAssetVolume", "TakerBuyQuoteAssetVolume", "Ignore"])
+            # Convert timestamp to datetime
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            print(df.head())
+            print(df.tail())
 
     def fetch_data(self, source = "yfinance", symbol="NVDA", start=None, end=None, period="1d", interval="1m", limit=200):
         """
@@ -209,9 +272,8 @@ class DataProvider(MT5_funcs):
             data = self.fetch_yfinance_data(symbol, start, end, period, interval)
         elif source == "bybit":
             kline_data = self.fetch_bybit_kline(symbol, interval, limit)
-            mt5_data = self.prepare_mt5_format(kline_data)
-            print(mt5_data[:5])
-            print(mt5_data[-5:])
+        elif source == "bitstamp":
+            data = self.fetch_bitstamp_data(symbol, interval, start, end)
         else:
             raise ValueError("Invalid source specified.")
         
@@ -226,7 +288,7 @@ class DataProvider(MT5_funcs):
         
         # return self.last_date.strftime('%Y-%m-%d'), True
 
-    def fetch_data_in_chunks(self, source = "yfinance", symbol="NVDA", interval="1m"):
+    def fetch_yfinance_data_in_chunks(self, source = "yfinance", symbol="NVDA", interval="1m"):
         all_data = []
         finish = False
 
@@ -292,4 +354,60 @@ class DataProvider(MT5_funcs):
 
         # return self.last_date.strftime('%Y-%m-%d'), True
     
+    def fetch_bitstamp_data_in_chunks(self, source = "bitstamp", symbol="btcusd", interval="1m"):
+        """
+        Fetch all available OHLC data from Bitstamp for a specific interval.
+        """
+        all_data = []
+        data = self.fetch_bitstamp_data(symbol, interval=interval, limit=10)
+        # Check if data is available
+        if data.empty:
+            print(f"No data available for symbol: {symbol}")
+            return None
+        # Get the last available date
+        current_end = int(self.last_date.timestamp())
+
+        # open the existing file if exists then get the last date from last row
+        try:
+            existing_data = pd.read_csv(f"{self.directory}{symbol}_{interval}.csv")
+            start_date = existing_data["Time"].iloc[-1]
+            start_date = datetime.strptime(start_date, '%Y.%m.%d %H:%M').replace(tzinfo=timezone.utc)
+        except FileNotFoundError:
+            pass
+
+        while True:
+            df = self.fetch_bitstamp_data(symbol, interval, end=current_end)
+            if df is None or df.empty:
+                break
+            all_data.insert(0, df)
+            # Update current_end to the earliest timestamp in the current batch
+            current_end = int(df["timestamp"].iloc[0].timestamp())
+            print(f"Fetched {len(df)} rows. Earliest timestamp: {df['timestamp'].iloc[-1]}")
+            # Break loop if fewer rows are fetched (no more historical data)
+            if len(df) < 1000:
+                break
+            if 'start_date' in locals() and datetime.fromtimestamp(current_end, tz=timezone.utc) < start_date:
+                break
+            # if current_end < int(datetime(2023, 1, 1).timestamp()):
+            #     break
+            time.sleep(1)  # Prevent hitting API rate limits
+
+        # Concatenate all chunks into a single DataFrame
+        if all_data:
+            all_data = pd.concat(all_data)
+            mt5_data = self.prepare_mt5_format(all_data)
+            self.save_to_csv(mt5_data, f"{symbol}_{interval}.csv")
+
+        # return self.last_date.strftime('%Y-%m-%d'), True
+
+    def fetch_all_data(self, source = "yfinance", symbol="NVDA", interval="1m"):
+        """
+        Fetch all available data for the specified symbol and interval.
+        """
+        if source == "yfinance":
+            self.fetch_yfinance_data_in_chunks(source, symbol, interval)
+        elif source == "bitstamp":
+            self.fetch_bitstamp_data_in_chunks(source, symbol, interval)
+        else:
+            raise ValueError("Invalid source specified.")
     

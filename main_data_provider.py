@@ -37,21 +37,25 @@ if __name__ == "__main__":
     if True:
 
         for symbol in symbols:
+            # data.fetch_data(source=symbol["source"], symbol=symbol["sr_symbol"], period="1d", interval="1m")
+            # data.fetch_bitstamp_data()
             for interval in ["1m", "5m", "1h", "1d"]:
-                data.fetch_data_in_chunks(source=symbol["source"], symbol=symbol["sr_symbol"], interval=interval)
+                data.fetch_all_data(source=symbol["source"], symbol=symbol["sr_symbol"], interval=interval)
+            print(f"Data for symbol {symbol['sr_symbol']} is fetched successfully.")
         while True:
             for symbol in symbols:
                 for interval in ["1m", "5m", "1h", "1d"]:
                     data.fetch_data(source=symbol["source"], symbol=symbol["sr_symbol"], period="1d", interval=interval)
-            try:
-                time_over = inputimeout(prompt='End (y/n): ', timeout=5)
-                if time_over == "y":
-                    break
-                else:
-                    time.sleep(30)  # wait x seconds
-                    print('\033[A', end="")
-            except Exception:
-                print('\033[A', end="")
+                print(f"Data for symbol {symbol['sr_symbol']} is fetched successfully.")
+            # try:
+            time_over = inputimeout(prompt='End (y/n): ', timeout=5)
+            if time_over == "y":
+                break
+            else:
+                time.sleep(30)  # wait x seconds
+                # print('\033[A', end="")
+            # except Exception:
+            #     print('\033[A', end="")
 
     # convert symbols to panda and save it to CSV file
     df_symbols = pd.DataFrame(symbols)
