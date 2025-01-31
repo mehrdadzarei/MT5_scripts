@@ -148,10 +148,14 @@ class DataProvider(MT5_funcs):
         Fetch historical data from Yahoo Finance using yfinance.
         """
         # Important: Use either start/end or period, not both.
-        if start is None:
-            data = yf.download(tickers=symbol, period=period, interval=interval, progress=False)
-        else:
-            data = yf.download(tickers=symbol, start=start, end=end, interval=interval, progress=False)
+        try:
+            if start is None:
+                data = yf.download(tickers=symbol, period=period, interval=interval, progress=False)
+            else:
+                data = yf.download(tickers=symbol, start=start, end=end, interval=interval, progress=False)
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+            return None
 
         if not data.empty:
             self.last_date = data.index[-1].to_pydatetime() + timedelta(days=1)
@@ -283,8 +287,9 @@ class DataProvider(MT5_funcs):
         # print(f"Collected: {data}")
         # self.save_to_mt5_format(data)
 
-        mt5_data = self.prepare_mt5_format(data)
-        self.save_to_csv(mt5_data, f"{symbol}_{interval}.csv")
+        if data is not None:
+            mt5_data = self.prepare_mt5_format(data)
+            self.save_to_csv(mt5_data, f"{symbol}_{interval}.csv")
         
         # return self.last_date.strftime('%Y-%m-%d'), True
 
