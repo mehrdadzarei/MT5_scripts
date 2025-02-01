@@ -156,8 +156,8 @@ void OnStart() {
       string symbol_name = symbol_list[i];
 
       // Import data for different timeframes
-      string timeframes[] = {"5m", "1h", "1d"};
-      ENUM_TIMEFRAMES periods[] = {PERIOD_M5, PERIOD_H1, PERIOD_D1};
+      string timeframes[] = {"1m", "5m", "1h", "1d"};
+      ENUM_TIMEFRAMES periods[] = {PERIOD_M1, PERIOD_M5, PERIOD_H1, PERIOD_D1};
 
       for (int tf = 0; tf < ArraySize(timeframes); tf++) {
         string timeframe = timeframes[tf];
